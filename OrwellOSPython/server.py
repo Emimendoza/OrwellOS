@@ -8,6 +8,26 @@ from os import path
 import asyncio
 
 
+def createTable(sql: sqlite3.Connection):
+    cursor = sql.cursor()
+    cursor.execute('CREATE TABLE IF NOT EXISTS clients (computerID INTEGER PRIMARY KEY, osVersion TEXT, '
+                   'computerName TEXT, computerType INTEGER)')
+    cursor.execute('CREATE TABLE IF NOT EXISTS blocks (x INTEGER, y INTEGER, z INTEGER, typeT TEXT, computerID '
+                   'INTEGER, PRIMARY KEY (x, y, z))')  # ComputerID is -1 for blocks that are not a computer or turtle
+    cursor.execute(
+        'CREATE TABLE IF NOT EXISTS items (type TEXT, computerID INTEGER, count INTEGER)')  # This table keeps track of items in the possession of computers and turtles
+    cursor.execute('CREATE TABLE IF NOT EXISTS zones (x INTEGER, y INTEGER, z INTEGER, widthI INTEGER, '
+                   'heightI INTEGER, depthI INTEGER, typeI INTEGER, PRIMARY KEY(x, y, z))')  # This table keeps track of zones
+    cursor.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, hashedPassword TEXT, salt TEXT)')
+    sql.commit()
+
+
+def setUpSSL(certPath: str, keyPath: str):
+    sslContext = ssl.SSLContext()
+    sslContext.load_cert_chain(certPath, keyPath)
+    return sslContext
+
+
 class Server:
     # Map of types to names
     typeMap = {
@@ -17,7 +37,7 @@ class Server:
         3: 'Advanced Turtle'
     }
 
-    def __init__(self, host, port, dbPath):
+    def __init__(self, host: str, port: int, dbPath: str, certPath: str|None = None, keyPath: str|None = None):
         self.host = host
         self.port = port
         if not path.exists(dbPath):
@@ -25,24 +45,20 @@ class Server:
         self.sql = sqlite3.connect(dbPath)
         self.clientCount = 0
         self.clients = []
-        self.createTable()
-
-    def createTable(self):
-        cursor = self.sql.cursor()
-        cursor.execute('CREATE TABLE IF NOT EXISTS clients (computerID INTEGER PRIMARY KEY, osVersion TEXT, '
-                       'computerName TEXT, computerType INTEGER)')
-        cursor.execute('CREATE TABLE IF NOT EXISTS blocks (x INTEGER, y INTEGER, z INTEGER, typeT TEXT, computerID '
-                       'INTEGER, PRIMARY KEY (x, y, z))')  # ComputerID is -1 for blocks that are not a computer or turtle
-        cursor.execute(
-            'CREATE TABLE IF NOT EXISTS items (type TEXT, computerID INTEGER, count INTEGER)')  # This table keeps track of items in the possession of computers and turtles
-        cursor.execute('CREATE TABLE IF NOT EXISTS zones (x INTEGER, y INTEGER, z INTEGER, widthI INTEGER, '
-                       'heightI INTEGER, depthI INTEGER, typeI INTEGER, PRIMARY KEY(x, y, z))')  # This table keeps track of zones
-        cursor.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, hashedPassword TEXT, salt TEXT)')
-        self.sql.commit()
+        createTable(self.sql)
+        if certPath is None or keyPath is None:
+            self.sslContext = None
+        else:
+            self.sslContext = setUpSSL(certPath, keyPath)
 
     async def run(self):
-        async with ws.serve(self.handler, self.host, self.port, ssl=ssl.SSLContext()) as server:
-            await server.wait_closed()
+        if self.sslContext is None:
+            print('Warning: SSL is not enabled on this server')
+            async with ws.serve(self.handler, self.host, self.port) as server:
+                await server.wait_closed()
+        else:
+            async with ws.serve(self.handler, self.host, self.port, ssl=self.sslContext) as server:
+                await server.wait_closed()
 
     @staticmethod
     async def getOrderJson(order: str, args: list | None = None):
@@ -63,12 +79,16 @@ class Server:
         try:
             await websocket.send('Hello')
             data = await websocket.recv()
-            if data.startswith('Hello') and data.endswith('OrwellOS'):
+            if data.startswith('Hello') and 'OrwellOS' in data:
                 print(f'{currClient}:Connected to {data[6:]}')
                 # Pass computer request to computer handler
                 client = await self.computerHandler(websocket, currClient)
             elif data.startswith('Login'):
                 print(f'{currClient}:Login request from {data[6:]}')
+                if self.sslContext is None:
+                    await websocket.send(await self.getOrderJson('error', ['SSL is not enabled on this server']))
+                    print(f'{currClient}:SSL is not enabled on this server')
+                    return
                 # Pass login request to user handler
                 user = await self.userHandler(websocket, currClient)
             else:
@@ -132,7 +152,6 @@ class Server:
             else:
                 pass  # TODO: Handle orders
         return client
-
 
 
 @dataclass

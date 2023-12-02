@@ -73,7 +73,7 @@ while true do
     if not ws then
         printError("Failed to connect to server: " .. err)
         sleep(5)
-    else
+    elseif ws.receive() == "Hello" then
         print("Connected to server")
         local computerName = os.getComputerLabel()
         if computerName == nil then
@@ -99,5 +99,8 @@ while true do
                 end
             end
         end
+    else
+        printError("Server did not respond with hello")
+        sleep(5)
     end
 end
