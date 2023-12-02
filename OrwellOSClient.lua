@@ -6,7 +6,7 @@ status. It gets orders from the server and executes them.
 --]]
 
 -- Variables
-local serverAddress = "wss://CHANGEME:8080"
+local serverAddress = "ws://localhost:28080"
 
 -- Functions
 function printError(message)
